@@ -129,6 +129,7 @@ byte p0 = 0, p1 = 0, p2 = 0, p3 = 0;
 byte v0 = 0, v1 = 0, v2 = 0, v3 = 0;
 byte sx = 0, sy = 0, rseed = 0;
 ushort addr = 0;
+ushort disabledVramUpdate = 0;
 
 // ===== INIT GRAPHICS =====
 
@@ -612,7 +613,7 @@ while (true)
             // GAME LOST
             set_vram_update(UPD_LOST);
             ppu_wait_nmi();
-            set_vram_update(0);
+            set_vram_update(disabledVramUpdate);
             while (true)
             {
                 ppu_wait_nmi();
@@ -625,7 +626,7 @@ while (true)
             // GAME WON
             set_vram_update(UPD_WON);
             ppu_wait_nmi();
-            set_vram_update(0);
+            set_vram_update(disabledVramUpdate);
             while (true)
             {
                 ppu_wait_nmi();

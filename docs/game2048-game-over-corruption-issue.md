@@ -6,7 +6,7 @@ After losing a game in `samples\game2048`, the display becomes corrupted: title-
 
 **RCA: confirmed in the locally rebuilt ROM.** The transpiler emits an incomplete 16-bit argument for `set_vram_update(0)`. It clears `A` but leaves `X` holding the high byte of the preceding ROM-table pointer. VRAM updates therefore remain enabled with an invalid update-stream pointer. Subsequent NMIs interpret unrelated ROM bytes as PPU update commands.
 
-The win handler contains the same call pattern and is likely affected too; winning was not exercised dynamically.
+**Fix applied:** scalar byte-sized addresses are now zero-extended for `set_vram_update`, while existing word values and array pointers retain their high byte. The sample explicitly uses a `ushort` zero address in both its loss and victory handlers.
 
 ## Reproduction
 
@@ -111,22 +111,17 @@ Both runs had identical nametable RAM immediately after the message update, befo
 - [`WriteLdc(byte)`](https://github.com/dartasen/dotnes/blob/27bddcf551a04d1338c80afdb23187a339860b0b/src/dotnes.tasks/Utilities/IL2NESWriter.LocalVariables.cs#L273-L338) emits the small constant into `A` without defining `X`.
 - The [default NESLib call path](https://github.com/dartasen/dotnes/blob/27bddcf551a04d1338c80afdb23187a339860b0b/src/dotnes.tasks/Utilities/IL2NESWriter.ILDispatch.cs#L3352-L3427) handles byte-array pointers but does not widen a byte-sized zero into the complete word required by `set_vram_update(ushort)`.
 - [`ReflectionCache`](https://github.com/dartasen/dotnes/blob/27bddcf551a04d1338c80afdb23187a339860b0b/src/dotnes.tasks/Utilities/ReflectionCache.cs#L42-L46) selects the `byte[]` overload by name. That is relevant when designing an overload-aware fix; it is not sufficient to assume the cached method describes a raw-address call.
-- The [win handler](https://github.com/dartasen/dotnes/blob/27bddcf551a04d1338c80afdb23187a339860b0b/samples/game2048/Program.cs#L623-L635) also emits `LDA #$00; JSR set_vram_update` without clearing `X`.
+- At the investigated baseline, the [win handler](https://github.com/dartasen/dotnes/blob/27bddcf551a04d1338c80afdb23187a339860b0b/samples/game2048/Program.cs#L623-L635) used the same `set_vram_update(0)` pattern; the fix covers both terminal paths.
 
-## Suggested fix and acceptance criteria
+## Fix details
 
-Fix argument lowering for the raw-address overload so a zero or other byte-range address is passed as a complete 16-bit value. For zero, both `A` and `X` must be zero at entry to `set_vram_update`. Preserve the high byte for genuine word addresses and ROM/RAM array pointers.
+The default call lowering now clears `X` for scalar `set_vram_update` arguments known to fit in one byte, unless a word value is already loaded in `A:X`. It excludes byte-array pointer arguments, so ROM/RAM update buffers remain valid. The runtime routine was not changed: address `$0100` must stay enabled, even though its low byte is zero.
 
-Do not treat changing the sample to `set_vram_update((ushort)0)` as a verified fix: a constant cast can compile to the same IL constant. Likewise, do not change the runtime to disable updates whenever `A == 0`; valid addresses such as the VRAM buffer at `$0100` also have a zero low byte.
+The regression test selects an array buffer first to seed a nonzero high byte, then verifies a literal zero, a runtime byte zero, and a word zero all disable updates. It also checks `$0123`, `$0100`, and array-pointer handling. `samples\game2048\Program.cs` now passes a named `ushort` zero value from both loss and win handlers.
 
-- Add a focused execution regression in the existing test suite: select a ROM update buffer with a nonzero high byte, call `set_vram_update(0)`, and assert `$04`, `$05`, and `$06` are all zero.
-- Cover a nonzero byte-range raw address, `$0100`, and array-pointer calls to ensure widening does not break valid addresses.
-- Verify loss, win, and Start-to-restart transitions in MesenCE, including repeated games and Debug/Release builds.
-- Confirm nametable and palette state remain stable after the intended final update while waiting for Start.
-- Run the relevant tests without `--no-build`. Do not regenerate existing verified ROM snapshots for unchanged samples to make tests pass.
+## Validation
 
-## Validation performed for this report
-
-`dotnet build samples\game2048\game2048.csproj --no-restore --nologo -t:Rebuild` succeeded with zero warnings and errors. The rebuilt ROM was disassembled, and both headless emulator runs completed successfully with the pointer and nametable results above.
-
-No production-code fix or snapshot change is included in this report.
+- Rebuilt the game2048 sample in Debug and Release with zero warnings or errors.
+- Rebuilt the sample test assemblies and updated the game2048 ROM snapshot to reflect the sample source change; other sample snapshots were unchanged.
+- The full test suite passed: 68 analyzer tests and 3,093 dotnes tests. The repository's package-clean target was temporarily skipped because a locked file prevented deleting `samples\packages`; the target was restored afterward.
+- Headless MesenCE runs forced full boards into both the loss and victory paths. In each path, the post-message update pointer became `$0000`, updates were disabled after the next NMI, and nametable RAM remained unchanged afterward.

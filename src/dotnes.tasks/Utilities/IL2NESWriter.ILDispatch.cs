@@ -3353,6 +3353,8 @@ partial class IL2NESWriter
                     default:
                         if (TryEmitArrayParameterCall(operand))
                             break;
+                        bool usesByteArrayPointer = _ldlocByteArrayLabel != null
+                            || _lastByteArrayLabel != null;
                         // Handle byte array locals loaded via ldloc (pushax pattern).
                         // Fastcall functions (pal_bg, pal_spr, pal_all, vram_unrle) expect
                         // pointer in A:X, not on cc65 stack. Replace pushax+size with just LDA/LDX.
@@ -3406,6 +3408,13 @@ partial class IL2NESWriter
                                 _lastByteArrayLabel = null;
                                 _lastByteArraySize = 0;
                             }
+                        }
+                        // set_vram_update expects a 16-bit address in A:X. Clear X
+                        // when the scalar argument is not already tracked as a word.
+                        if (operand == nameof(NESLib.set_vram_update)
+                            && !usesByteArrayPointer && !_ushortInAX)
+                        {
+                            Emit(Opcode.LDX, AddressMode.Immediate, 0x00);
                         }
                         // Emit JSR — extern methods use cc65 _prefix convention
                         if (ExternMethodNames.Contains(operand))

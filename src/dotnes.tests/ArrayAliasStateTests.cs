@@ -82,4 +82,76 @@ public class ArrayAliasStateTests(ITestOutputHelper output) : ExecutionTests(out
         Assert.Equal(Cpu6502.SoftwareStackTop, cpu.SoftwareStackPointer);
         Assert.Equal(0xFD, cpu.SP);
     }
+
+    [Fact]
+    public void SetVramUpdateByteAddressClearsStaleHighByteAndPreservesWordAndArrayPointers()
+    {
+        var cpu = ExecuteProgram(
+            """
+            byte[] table = new byte[] { 11, 22, 33 };
+            set_vram_update(table);
+            byte tableLow = peek(4);
+            byte tableHigh = peek(5);
+
+            set_vram_update(0);
+            byte zeroLow = peek(4);
+            byte zeroHigh = peek(5);
+            byte zeroEnabled = peek(6);
+
+            poke(0x6000, 0);
+            byte address = peek(0x6000);
+            set_vram_update(address);
+            byte localLow = peek(4);
+            byte localHigh = peek(5);
+            byte localEnabled = peek(6);
+
+            ushort zeroWordAddress = 0;
+            set_vram_update(zeroWordAddress);
+            byte zeroWordLow = peek(4);
+            byte zeroWordHigh = peek(5);
+            byte zeroWordEnabled = peek(6);
+
+            ushort wordAddress = 0x0123;
+            set_vram_update(wordAddress);
+            byte wordLow = peek(4);
+            byte wordHigh = peek(5);
+            byte wordEnabled = peek(6);
+
+            set_vram_update(0x0100);
+            byte bufferLow = peek(4);
+            byte bufferHigh = peek(5);
+            byte bufferEnabled = peek(6);
+
+            poke(0x6010, tableLow);
+            poke(0x6011, tableHigh);
+            byte[] results = new byte[]
+            {
+                zeroLow, zeroHigh, zeroEnabled,
+                localLow, localHigh, localEnabled,
+                zeroWordLow, zeroWordHigh, zeroWordEnabled,
+                wordLow, wordHigh, wordEnabled,
+                bufferLow, bufferHigh, bufferEnabled
+            };
+            for (byte i = 0; i < 15; i++)
+                poke((ushort)(0x6000 + i), results[i]);
+            test_stop();
+            while (true) ;
+            static extern void test_stop();
+            """);
+
+        Assert.Equal(new byte[]
+        {
+            0, 0, 0,
+            0, 0, 0,
+            0, 0, 0,
+            0x23, 0x01, 0x23,
+            0x00, 0x01, 0x01
+        }, cpu.Memory[0x6000..0x600F]);
+
+        int table = cpu.Memory[0x6010] | cpu.Memory[0x6011] << 8;
+        Assert.True(table >= NESConstants.PrgRomStart, $"Update pointer was ${table:X4}");
+        Assert.Equal(new byte[] { 11, 22, 33 }, cpu.Memory[table..(table + 3)]);
+        Assert.Equal(Cpu6502.SoftwareStackTop, cpu.SoftwareStackPointer);
+        Assert.Equal(0xFD, cpu.SP);
+    }
 }
